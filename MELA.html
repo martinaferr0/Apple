@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Apple Face WebApp</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Roboto', sans-serif;
+      background: green;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      overflow: auto;
+    }
+    #titleContainer { text-align: center; margin-top: 40px; }
+    #titleContainer h1 { margin: 0; font-size: 2rem; font-weight: 700; }
+    #titleContainer h2 { margin: 0; font-size: 1.25rem; font-weight: 400; }
+    #cameraWrapper { width: 80vw; max-width: 480px; aspect-ratio: 4/3; margin: 20px auto; position: relative; background: #111; overflow: hidden; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      transform-origin: center;
+    }
+    #appleBox, #faceBox { position: absolute; box-sizing: border-box; pointer-events: none; display: none; }
+    #appleBox { border: 2px solid #4caf50; border-radius: 4px; }
+    #faceBox { border: 2px solid #2196f3; border-radius: 4px; }
+    #message { text-align: center; margin: 12px 0; font-size: 1rem; }
+    #countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 3rem; color: #ff4d4f; text-align: center; display: none; z-index: 2; }
+    #result { display: none; flex-direction: row; align-items: flex-start; justify-content: center; margin: 20px auto; gap: 24px; }
+    #snapshot {
+      width: 80vw;
+      max-width: 480px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      transform: scaleX(-1);
+    }
+    #concept { max-width: 400px; font-size: 1rem; line-height: 1.4; text-align: left; color: #ccc; }
+    a.button, button.button { display: inline-block; padding: 12px 24px; border-radius: 8px; background: #0070f3; color: white; text-decoration: none; border: none; font-weight: 700; cursor: pointer; }
+    /* Modal remains on page but without trigger */
+    #contactModal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.8); display: none; justify-content: center; align-items: center; z-index: 10; }
+    #contactForm { background: #222; padding: 20px; border-radius: 8px; max-width: 90%; width: 320px; display: flex; flex-direction: column; gap: 12px; }
+    #contactForm textarea { width: 100%; height: 100px; border-radius: 4px; border: 1px solid #444; background: #111; color: #fff; padding: 8px; font-family: 'Roboto', sans-serif; font-size: 1rem; }
+    #contactForm .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  </style>
+</head>
+<body>
+  <div id="titleContainer">
+    <h1>APPLE ID</h1>
+    <h2 id="subtitle">To access, frame an apple and your face…</h2>
+  </div>
+  <div id="cameraWrapper">
+    <video id="video" autoplay muted playsinline></video>
+    <div id="appleBox"></div>
+    <div id="faceBox"></div>
+    <div id="countdown"></div>
+  </div>
+  <div id="message">Frame an apple</div>
+  <div id="result">
+    <div>
+      <div id="successText"></div>
+      <img id="snapshot" src="" alt="Snapshot" />
+    </div>
+    <div id="concept">
+      <h2>Concept</h2>
+      <p>
+        You asked me to send you an apple… in digital format! I immediately wondered, “How do you send an apple on screen? And what really is an apple?” Icons, GIFs, and emojis all felt too flat.
+        So I took a different route: I transformed the “digital apple” concept into a physical experience. Since I couldn’t ship the fruit myself, I made you do it… or rather, you had to get the apple to unlock the file.
+        Mission accomplished: you’ve received your real apple, indirectly “shipped” by me! 🍎
+      </p>
+      <a id="downloadBtn" class="button" href="#" download="snapshot.png">Download the photo</a>
+    </div>
+  </div>
+
+  <!-- Contact Modal remains, but without an open button -->
+  <div id="contactModal">
+    <div id="contactForm">
+      <label for="contactMessage" style="color:#fff;">Message:</label>
+      <textarea id="contactMessage">The apple has been received by the recipient!</textarea>
+      <div class="actions">
+        <button id="sendEmail" class="button">Send</button>
+        <button id="cancelEmail" class="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- External libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+
+  <script>
+    let snapshotDataURL = '';
+    const video = document.getElementById('video');
+    const message = document.getElementById('message');
+    const countdownEl = document.getElementById('countdown');
+    const resultEl = document.getElementById('result');
+    const snapshotImg = document.getElementById('snapshot');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const titleContainer = document.getElementById('titleContainer');
+    const subtitle = document.getElementById('subtitle');
+    const appleBox = document.getElementById('appleBox');
+    const faceBox = document.getElementById('faceBox');
+    const sendEmail = document.getElementById('sendEmail');
+    const cancelEmail = document.getElementById('cancelEmail');
+    let detector;
+    const reprimands = [
+      "Hey, I don’t see a real apple! 🍏",
+      "Try again, I need a real fruit! 😜",
+      "Nice shot, but I need a real apple! 😉"
+    ];
+
+    async function loadModels() {
+      message.innerText = 'Loading face-api...';
+      try {
+        await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
+      } catch (e) {
+        return message.innerText = 'face-api error: ' + e.message;
+      }
+      message.innerText = 'Loading COCO-SSD...';
+      try {
+        detector = await cocoSsd.load();
+      } catch (e) {
+        return message.innerText = 'COCO-SSD error: ' + e.message;
+      }
+      startVideo();
+    }
+
+    function startVideo() {
+      message.innerText = 'Frame an apple';
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+          video.srcObject = stream;
+          video.play();
+          video.addEventListener('playing', classifyLoop);
+        })
+        .catch(err => message.innerText = 'Camera error: ' + err.message);
+    }
+
+    async function classifyLoop() {
+      if (!video.videoWidth) return requestAnimationFrame(classifyLoop);
+      const scaleX = video.clientWidth / video.videoWidth;
+      const scaleY = video.clientHeight / video.videoHeight;
+      let predictions;
+      try {
+        predictions = await detector.detect(video);
+      } catch (e) {
+        return message.innerText = 'Detection error: ' + e.message;
+      }
+      const apple = predictions.find(p => p.class === 'apple' && p.score > 0.5);
+      if (apple) {
+        appleBox.style.display = 'block';
+        const appleX = apple.bbox[0] * scaleX;
+        const appleW = apple.bbox[2] * scaleX;
+        appleBox.style.left = `${video.clientWidth - appleX - appleW}px`;
+        appleBox.style.top = `${apple.bbox[1] * scaleY}px`;
+        appleBox.style.width = `${appleW}px`;
+        appleBox.style.height = `${apple.bbox[3] * scaleY}px`;
+        message.innerText = '';
+        detectFace();
+      } else {
+        appleBox.style.display = 'none';
+        message.innerText = reprimands[Math.floor(Math.random() * reprimands.length)];
+        setTimeout(classifyLoop, 1200);
+      }
+    }
+
+    async function detectFace() {
+      if (!video.videoWidth) return requestAnimationFrame(detectFace);
+      const scaleX = video.clientWidth / video.videoWidth;
+      const scaleY = video.clientHeight / video.videoHeight;
+      let face = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
+      if (face) {
+        faceBox.style.display = 'block';
+        const faceX = face.box.x * scaleX;
+        const faceW = face.box.width * scaleX;
+        faceBox.style.left = `${video.clientWidth - faceX - faceW}px`;
+        faceBox.style.top = `${face.box.y * scaleY}px`;
+        faceBox.style.width = `${faceW}px`;
+        faceBox.style.height = `${face.box.height * scaleY}px`;
+        startCountdown();
+      } else {
+        faceBox.style.display = 'none';
+        requestAnimationFrame(detectFace);
+      }
+    }
+
+    function startCountdown() {
+      let count = 3;
+      countdownEl.style.display = 'block';
+      (function tick() {
+        countdownEl.innerHTML = `<strong>Smile!</strong><br>${count}`;
+        if (count > 0) {
+          count--;
+          setTimeout(tick, 800);
+        } else {
+          countdownEl.style.display = 'none';
+          takeSnapshot();
+        }
+      })();
+    }
+
+    function takeSnapshot() {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      snapshotDataURL = canvas.toDataURL('image/png');
+      snapshotImg.src = snapshotDataURL;
+      downloadBtn.href = snapshotDataURL;
+      // Update title and subtitle
+      titleContainer.innerHTML = '<h1>The apple has been delivered! 🍎</h1>';
+      // Hide camera and show result
+      message.style.display = 'none';
+      document.getElementById('cameraWrapper').style.display = 'none';
+      resultEl.style.display = 'flex';
+    }
+
+    loadModels();
+  </script>
+</body>
+</html>
